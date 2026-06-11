@@ -1,0 +1,2 @@
+timestamp,scenario,condition,trial,success,latency,attempts,tokens,stop_reason,confidence_score,TC,SC,MS
+20260323_113110,L1-A,proposed,1,False,0,0,0,"exception:404 models/text-embedding-004 is not found for API version v1beta, or is not supported for embedContent. Call ListModels to see the list of available models and their supported methods.",,,,

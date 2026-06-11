@@ -1,0 +1,50 @@
+services:
+  backend:
+    build: ./app
+    ports:
+      - "8000:8000"
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-models/gemini-embedding-001}
+      - EMBEDDING_VERSION=${EMBEDDING_VERSION:-20250301}
+      - USE_MOCK_GEMINI=${USE_MOCK_GEMINI:-true}
+      - MOCK_GEMINI_URL=http://mock_gemini:9000
+    volumes:
+      - ./app:/app
+      - ./results:/results
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+
+  frontend:
+    profiles: ["ui"]
+    build: ./frontend
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend/src:/app/src
+    depends_on:
+      - backend
+
+  mock_gemini:
+    build: ./evaluation
+    ports:
+      - "9000:9000"
+    command: python mock_gemini_server.py
+
+  agent:
+    build: ./agent
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-models/gemini-embedding-001}
+      - EMBEDDING_VERSION=${EMBEDDING_VERSION:-20250301}
+      - BACKEND_URL=http://backend:8000
+      - USE_MOCK_GEMINI=${USE_MOCK_GEMINI:-true}
+      - MOCK_GEMINI_URL=http://mock_gemini:9000
+    volumes:
+      - ./agent:/agent
+      - ./app:/app
+      - ./evaluation:/evaluation
+      - ./results:/results
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      - backend
+      - mock_gemini

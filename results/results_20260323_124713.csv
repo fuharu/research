@@ -1,0 +1,2 @@
+timestamp,scenario,condition,trial,success,latency,attempts,tokens,stop_reason,confidence_score,TC,SC,MS
+20260323_124713,L1-C,proposed,1,True,2.661,1,500,success,0.8,1.0,1.0,0.0

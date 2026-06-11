@@ -1,0 +1,9 @@
+.env
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+.env.local
+*.bak
+*.agent_bak

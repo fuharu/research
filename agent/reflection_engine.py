@@ -184,6 +184,7 @@ def run(
         memory_hits: 記憶DBからの類似パターン
         apply_fix_fn: (fix_code: str) → bool  サンドボックスで適用
         test_fn:      () → dict               事前定義テストを実行
+        source_code: 修正対象ファイルの現在（バグ入り）のコード
     """
     start   = time.perf_counter()
     tokens  = 0
@@ -223,4 +224,48 @@ def run(
             history.append({"fix_summary": "コード抽出失敗", "error": "コードブロックが見つからない"})
             continue
 
-        # ── サンドボックスで適用・テスト ─────
+        # ── サンドボックスで適用・テスト ─────────
+        try:
+            apply_fix_fn(fix_code)
+            test_result = test_fn()
+        except Exception as e:
+            history.append({"fix_summary": fix_code[:100], "error": str(e)})
+            continue
+
+        # ── 正常停止 ─────────────────────────────
+        if test_result.get("all_passed"):
+            return LoopResult(
+                success=True,
+                fix_code=fix_code,
+                attempts=attempt + 1,
+                latency=round(time.perf_counter() - start, 3),
+                tokens=tokens,
+                stop_reason="success",
+                history=history,
+            )
+
+        # テスト失敗 → 履歴に追記してループ継続
+        failed = [r for r in test_result.get("details", []) if not r["passed"]]
+        history.append({
+            "fix_summary": fix_code[:100],
+            "error": f"テスト失敗: {[r['name'] for r in failed]}",
+        })
+
+    # ── 停止トリガー① 試行回数上限 ──────────────
+    return LoopResult(
+        success=False,
+        attempts=MAX_ATTEMPTS,
+        latency=round(time.perf_counter() - start, 3),
+        tokens=tokens,
+        stop_reason="max_attempts",
+        history=history,
+    )
+
+
+def _extract_code(text: str) -> str | None:
+    """LLMの出力からコードブロックを抽出する"""
+    import re
+    match = re.search(r"```python\s*(.*?)```", text, re.DOTALL)
+    if match:
+        return match.group(1).strip()
+    return None

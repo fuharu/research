@@ -40,9 +40,18 @@ def _get_collection():
     ef = _get_embedding_function()
     # プロバイダ＋バージョンでコレクションを分離（次元の異なるベクトルの混在を防ぐ）
     collection_name = f"episode_memory_{EMBEDDING_PROVIDER}_{EMBEDDING_VERSION}"
+    # 距離を【コサイン】に固定する（重要）。
+    #   Chroma の既定は L2（ユークリッド）距離。search_similar は similarity = 1 - dist と
+    #   していてコサインを前提にしているため、L2 のままだと「ほぼ同一」でも distance が 0.3 前後
+    #   になり 1-0.3=0.7 < 0.75 で弾かれる（＝似た事例を拾えない）。cosine にすると
+    #   distance = 1 - cos となり、似た事例ほど similarity が 0.9 前後で正しく拾える。
+    #   注：space はコレクション作成時にのみ決定される。既存(L2)コレクションがあると
+    #   get_or_create はそれを返すので、results/memory_db を消すか EMBEDDING_VERSION を
+    #   上げて作り直すこと。
     return client.get_or_create_collection(
         name=collection_name,
         embedding_function=ef,
+        metadata={"hnsw:space": "cosine"},
     )
 
 

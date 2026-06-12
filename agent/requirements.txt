@@ -1,3 +1,4 @@
 chromadb
 google-generativeai
 httpx
+boto3

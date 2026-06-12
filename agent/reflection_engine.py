@@ -17,7 +17,8 @@ TIMEOUT_SECONDS = 300
 MAX_TOKENS      = 50_000
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-GEMINI_URL     = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+GEMINI_MODEL   = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")   # .env で gemini-2.5-flash 等に変更可
+GEMINI_URL     = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
 
 
 @dataclass
@@ -33,24 +34,73 @@ class LoopResult:
 
 # ── LLM呼び出し ──────────────────────────────
 
+def _call_bedrock(prompt: str) -> tuple[str, int]:
+    """Amazon Bedrock（Claude等）で生成。Throttling等は指数バックオフでリトライ。"""
+    import boto3
+    region   = os.getenv("AWS_REGION", "us-east-1")
+    model_id = os.getenv("BEDROCK_MODEL_ID", "anthropic.claude-3-5-haiku-20241022-v1:0")
+    client   = boto3.client("bedrock-runtime", region_name=region)
+
+    max_retries = 5
+    base_wait   = 4.0
+    for attempt in range(max_retries):
+        try:
+            resp = client.converse(
+                modelId=model_id,
+                messages=[{"role": "user", "content": [{"text": prompt}]}],
+                inferenceConfig={"maxTokens": 4096, "temperature": 1.0},
+            )
+            text   = resp["output"]["message"]["content"][0]["text"]
+            tokens = resp.get("usage", {}).get("totalTokens", 500)
+            return text, tokens
+        except Exception as e:
+            code = ""
+            if isinstance(getattr(e, "response", None), dict):
+                code = e.response.get("Error", {}).get("Code", "")
+            transient = code in (
+                "ThrottlingException", "TooManyRequestsException",
+                "ServiceUnavailableException", "ModelTimeoutException",
+                "InternalServerException",
+            )
+            if attempt < max_retries - 1 and transient:
+                time.sleep(min(base_wait * (2 ** attempt), 60))
+                continue
+            raise
+
+
 def _call_gemini(prompt: str) -> tuple[str, int]:
-    """Gemini APIを呼び出す（USE_MOCK_GEMINI=true の場合はモックを使用）"""
-    use_mock = os.getenv("USE_MOCK_GEMINI", "true").lower() == "true"
+    """修復LLMを呼び出す（LLM_PROVIDER で gemini/bedrock を切替。mock 時はモックGemini）"""
+    if os.getenv("LLM_PROVIDER", "gemini").lower() == "bedrock":
+        return _call_bedrock(prompt)
+    # 修復LLMはバックエンド(app)のモック設定とは独立に制御する。
+    # REFLECTION_USE_MOCK が未設定/空なら USE_MOCK_GEMINI にフォールバック（後方互換）。
+    use_mock = (os.getenv("REFLECTION_USE_MOCK") or os.getenv("USE_MOCK_GEMINI", "true")).lower() == "true"
     mock_url = os.getenv("MOCK_GEMINI_URL", "http://mock_gemini:9000")
 
     if use_mock:
         url = f"{mock_url}/v1beta/models/gemini-1.5-flash:generateContent"
-        resp = httpx.post(
-            url,
-            json={"contents": [{"parts": [{"text": prompt}]}]},
-            timeout=60,
-        )
+        params = {}
     else:
-        resp = httpx.post(
-            f"{GEMINI_URL}?key={GEMINI_API_KEY}",
-            json={"contents": [{"parts": [{"text": prompt}]}]},
-            timeout=60,
-        )
+        url = GEMINI_URL
+        params = {"key": GEMINI_API_KEY}
+
+    payload = {"contents": [{"parts": [{"text": prompt}]}]}
+
+    # 429（レート制限）/ 5xx（一時障害）は指数バックオフでリトライ。
+    # Retry-After ヘッダがあれば優先。400/403 等は即時に例外を投げる。
+    max_retries = 5
+    base_wait   = 4.0
+    resp = None
+    for attempt in range(max_retries):
+        resp = httpx.post(url, params=params, json=payload, timeout=60)
+        if resp.status_code == 429 or resp.status_code >= 500:
+            if attempt < max_retries - 1:
+                retry_after = resp.headers.get("Retry-After")
+                wait = float(retry_after) if retry_after else base_wait * (2 ** attempt)
+                time.sleep(min(wait, 60))
+                continue
+        break
+
     resp.raise_for_status()
     data = resp.json()
     text   = data["candidates"][0]["content"]["parts"][0]["text"]

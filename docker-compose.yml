@@ -37,8 +37,19 @@ services:
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-models/gemini-embedding-001}
       - EMBEDDING_VERSION=${EMBEDDING_VERSION:-20250301}
       - BACKEND_URL=http://backend:8000
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.0-flash}
       - USE_MOCK_GEMINI=${USE_MOCK_GEMINI:-true}
+      - REFLECTION_USE_MOCK=${REFLECTION_USE_MOCK:-}
       - MOCK_GEMINI_URL=http://mock_gemini:9000
+      # ── LLMプロバイダ切替（gemini | bedrock）＆ AWS Bedrock 設定 ──
+      - LLM_PROVIDER=${LLM_PROVIDER:-gemini}
+      - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:-}
+      - BEDROCK_MODEL_ID=${BEDROCK_MODEL_ID:-anthropic.claude-3-5-haiku-20241022-v1:0}
+      - BEDROCK_EMBED_MODEL_ID=${BEDROCK_EMBED_MODEL_ID:-amazon.titan-embed-text-v2:0}
+      - AWS_REGION=${AWS_REGION:-us-east-1}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
+      - AWS_SESSION_TOKEN=${AWS_SESSION_TOKEN:-}
     volumes:
       - ./agent:/agent
       - ./app:/app

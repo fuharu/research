@@ -11,6 +11,8 @@ import time
 import chromadb
 from chromadb.utils import embedding_functions
 
+# 埋め込みプロバイダ：gemini | bedrock（未設定なら LLM_PROVIDER → gemini にフォールバック）
+EMBEDDING_PROVIDER = os.getenv("EMBEDDING_PROVIDER", os.getenv("LLM_PROVIDER", "gemini")).lower()
 EMBEDDING_MODEL   = os.getenv("EMBEDDING_MODEL",   "models/gemini-embedding-001")
 EMBEDDING_VERSION = os.getenv("EMBEDDING_VERSION", "20250301")
 SIMILARITY_THRESHOLD = 0.75   # 暫定値。ROC分析後に更新する
@@ -18,14 +20,26 @@ DB_PATH = "/results/memory_db"
 
 # ── 初期化 ───────────────────────────────────
 
-def _get_collection():
-    client = chromadb.PersistentClient(path=DB_PATH)
-    ef = embedding_functions.GoogleGenerativeAiEmbeddingFunction(
+def _get_embedding_function():
+    """プロバイダに応じた埋め込み関数を返す。"""
+    if EMBEDDING_PROVIDER == "bedrock":
+        import boto3
+        session = boto3.Session(region_name=os.getenv("AWS_REGION", "us-east-1"))
+        return embedding_functions.AmazonBedrockEmbeddingFunction(
+            session=session,
+            model_name=os.getenv("BEDROCK_EMBED_MODEL_ID", "amazon.titan-embed-text-v2:0"),
+        )
+    return embedding_functions.GoogleGenerativeAiEmbeddingFunction(
         api_key=os.getenv("GEMINI_API_KEY"),
         model_name=EMBEDDING_MODEL,
     )
-    # コレクション名にバージョンを含める（モデル更新時の混在防止）
-    collection_name = f"episode_memory_{EMBEDDING_VERSION}"
+
+
+def _get_collection():
+    client = chromadb.PersistentClient(path=DB_PATH)
+    ef = _get_embedding_function()
+    # プロバイダ＋バージョンでコレクションを分離（次元の異なるベクトルの混在を防ぐ）
+    collection_name = f"episode_memory_{EMBEDDING_PROVIDER}_{EMBEDDING_VERSION}"
     return client.get_or_create_collection(
         name=collection_name,
         embedding_function=ef,

@@ -7,3 +7,6 @@ venv/
 .env.local
 *.bak
 *.agent_bak
+
+# 実験成果物・記憶DB（生成物：コミットしない）
+results/

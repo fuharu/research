@@ -1,2 +1,0 @@
-timestamp,scenario,condition,trial,success,latency,attempts,tokens,stop_reason,confidence_score,TC,SC,MS
-20260323_111516,L1-A,proposed,1,False,0,0,0,exception:The Google Generative AI python package is not installed. Please install it with `pip install google-generativeai`,,,,

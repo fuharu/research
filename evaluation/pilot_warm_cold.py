@@ -149,17 +149,20 @@ def summarize(rows):
 
 # ------------------------------------------------------------------ main
 def main():
+    fields = ["condition", "success", "attempts", "latency_s", "tokens",
+              "stop_reason", "n_hits", "MS", "SC", "TC"]
     rows = []
-    for cond in ["cold", "warm"]:
-        for i in range(N_TRIALS):
-            rows.append(one_trial(cond))
-            r = rows[-1]
-            print(f"{cond} {i+1}/{N_TRIALS}: success={r['success']} "
-                  f"attempts={r['attempts']} hits={r['n_hits']}")
+    # 1試行ごとに書き出し＆flush → 途中で中断/クラッシュしても結果が残る
     with open(OUT, "w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
-        w.writeheader()
-        w.writerows(rows)
+        w = csv.DictWriter(f, fieldnames=fields)
+        w.writeheader(); f.flush()
+        for cond in ["cold", "warm"]:
+            for i in range(N_TRIALS):
+                r = one_trial(cond)
+                rows.append(r)
+                w.writerow(r); f.flush()
+                print(f"{cond} {i+1}/{N_TRIALS}: success={r['success']} "
+                      f"attempts={r['attempts']} hits={r['n_hits']}")
     print("\nsaved:", OUT)
     summarize(rows)
 

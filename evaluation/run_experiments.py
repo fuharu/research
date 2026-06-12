@@ -69,6 +69,7 @@ def run_bl1(scenario: str, error_log: str) -> dict:
         memory_hits=[],   # 記憶なし
         apply_fix_fn=lambda code: _apply_fix(scenario, code),
         test_fn=lambda: run_all_tests(scenario),
+        source_code=_read_target_file(scenario),
     )
     return _loop_result_to_dict(result)
 
@@ -82,19 +83,21 @@ def run_proposed(scenario: str, error_log: str, trial_num: int) -> dict:
 
     memory_hits    = memory_db.search_similar(error_log)
     top_similarity = memory_db.get_top_similarity(error_log)
+    source_code    = _read_target_file(scenario)   # ループ前＝バグ入りの元コード
 
     result = reflection_engine.run(
         error_log=error_log,
         memory_hits=memory_hits,
         apply_fix_fn=lambda code: _apply_fix(scenario, code),
         test_fn=lambda: run_all_tests(scenario),
+        source_code=source_code,
     )
 
-    # 信頼スコアを算出
+    # 信頼スコアを算出（original はバグ入り元コード。旧版は修正後同士を比べSC≈1.0で無意味だった）
     test_result = run_all_tests(scenario)
     cs = compute_all(
         test_results=test_result.get("details", []),
-        original_code=_read_target_file(scenario),
+        original_code=source_code,
         modified_code=result.fix_code or "",
         top_similarity=top_similarity,
     )
@@ -148,11 +151,12 @@ def _apply_fix(scenario: str, fix_code: str):
 
 
 def _read_target_file(scenario: str) -> str:
-    """シナリオに対応するファイルを読み込む"""
-    if scenario.startswith("L1"):
-        return Path("/app/routers/tasks.py").read_text()
-    else:
-        return Path("/app/schemas/task.py").read_text()
+    """シナリオに対応する（実際に _apply_fix が書き換える）ファイルを読み込む。
+    ALLOWED_FILES と一致させる（旧版は L2-B/C が schemas を返し、書換先 routers と食い違っていた）。"""
+    target = ALLOWED_FILES.get(scenario)
+    if not target:
+        raise PermissionError(f"修正禁止のシナリオ: {scenario}")
+    return Path(target).read_text(encoding="utf-8")
 
 
 def _loop_result_to_dict(result) -> dict:

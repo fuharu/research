@@ -15,7 +15,7 @@ from chromadb.utils import embedding_functions
 EMBEDDING_PROVIDER = os.getenv("EMBEDDING_PROVIDER", os.getenv("LLM_PROVIDER", "gemini")).lower()
 EMBEDDING_MODEL   = os.getenv("EMBEDDING_MODEL",   "models/gemini-embedding-001")
 EMBEDDING_VERSION = os.getenv("EMBEDDING_VERSION", "20250301")
-SIMILARITY_THRESHOLD = 0.75   # 暫定値。ROC分析後に更新する
+SIMILARITY_THRESHOLD = 0.60   # 較正値: 兄弟0.84 / 別種≤0.32 の谷(diag_threshold.py)。旧0.75は高すぎ
 DB_PATH = "/results/memory_db"
 
 # ── 初期化 ───────────────────────────────────

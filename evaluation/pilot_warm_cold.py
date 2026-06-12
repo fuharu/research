@@ -46,10 +46,10 @@ OUT           = "/results/pilot_warm_cold.csv"
 # Warm 用シード：L1-A と「同種だが同一でない」兄弟事例。
 #  - error_log: L1-A の想定エラー（"KeyError: 'text' ..."）と構造は同じだがキーが違う
 #  - fix_code : 過去の兄弟修正（防御的パースの型）。テストの正解そのものではない
-SEED_ERROR_LOG = (
-    "KeyError: 'result' in candidates[0]['content']['parts'][0] "
-    "（Gemini応答スキーマ変更で期待キーが見つからない）"
-)
+# 注釈(日本語解説)は付けない。生のエラー文の方が記憶に貯まる形に近く、
+# Titan埋め込みでも兄弟エラー(L1-Aの "KeyError: 'text' ...")との類似度が
+# 0.55→0.84 に上がる（diag_threshold.py で確認済み）。
+SEED_ERROR_LOG = "KeyError: 'result' in candidates[0]['content']['parts'][0]"
 SEED_FIX_CODE = (
     "# 過去の兄弟ケースの修正例：応答パースを防御的に行いキー名の揺れを吸収する\n"
     "parts = data['candidates'][0]['content']['parts'][0]\n"
@@ -72,7 +72,8 @@ def one_trial(condition: str) -> dict:
         )
 
     inject(TEST_SCENARIO)
-    error_log = _get_error_log(TEST_SCENARIO)
+    error_log   = _get_error_log(TEST_SCENARIO)
+    source_code = _read_target_file(TEST_SCENARIO)   # ループ前＝バグ入りの元コード
 
     # Cold は記憶を渡さない。Warm は類似検索（閾値0.75以上のみ返る）
     memory_hits = memory_db.search_similar(error_log) if condition == "warm" else []
@@ -83,6 +84,7 @@ def one_trial(condition: str) -> dict:
         memory_hits=memory_hits,
         apply_fix_fn=lambda code: _apply_fix(TEST_SCENARIO, code),
         test_fn=lambda: run_all_tests(TEST_SCENARIO),
+        source_code=source_code,
     )
 
     # 信頼スコア（SCが機能しているかの確認用）。修正適用中＝restore前に算出する
@@ -92,7 +94,7 @@ def one_trial(condition: str) -> dict:
             tr = run_all_tests(TEST_SCENARIO)
             cs = compute_all(
                 test_results=tr.get("details", []),
-                original_code=_read_target_file(TEST_SCENARIO),
+                original_code=source_code,
                 modified_code=result.fix_code,
                 top_similarity=top_sim,
             )

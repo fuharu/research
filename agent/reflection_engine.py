@@ -114,6 +114,7 @@ def _build_prompt(
     error_log:   str,
     memory_hits: list[dict],
     history:     list[dict],
+    source_code: str | None = None,
 ) -> str:
     """失敗履歴と記憶DBの参照情報を組み込んだプロンプトを生成する"""
 
@@ -140,19 +141,28 @@ def _build_prompt(
         for i, h in enumerate(history, 1):
             history_section += f"試み{i}: {h.get('fix_summary', '')}  → 失敗理由: {h.get('error', '')}\n"
 
+    source_section = ""
+    if source_code:
+        source_section = f"""
+【修正対象ファイルの現在のコード（このファイルを修正する。勝手に別物へ作り変えない）】
+```python
+{source_code}
+```
+"""
+
     return f"""
 あなたはソフトウェアエンジニアです。以下の実行時エラーを修正するPythonコードを生成してください。
 
 【発生したエラー】
 {error_log}
-{memory_section}
+{source_section}{memory_section}
 {history_section}
 
 【指示】
 1. エラーの根本原因を1文で説明してください
 2. 修正方針を1文で説明してください
-3. 【重要】修正後のファイル全体のコードを出力してください
-4. スニペットではなく、importから始まる完全なPythonファイルとして出力してください（```python ``` で囲む）
+3. 【重要】上記「現在のコード」を最小限だけ直し、修正後のファイル全体を出力してください
+4. クラス名・関数名・エンドポイント等の既存構造は維持し、import から始まる完全なPythonファイルを出力してください（```python ``` で囲む）
 5. 過去の失敗アプローチは絶対に繰り返さないでください
 """.strip()
 
@@ -164,6 +174,7 @@ def run(
     memory_hits: list[dict],
     apply_fix_fn,    # サンドボックスで修正を適用してテストする関数
     test_fn,         # 事前定義テストを実行する関数
+    source_code: str | None = None,   # 修正対象ファイルの現在のコード（バグ入り）
 ) -> LoopResult:
     """
     リフレクションループを実行する
@@ -198,7 +209,7 @@ def run(
             )
 
         # ── 修正案生成 ───────────────────────────
-        prompt = _build_prompt(error_log, memory_hits, history)
+        prompt = _build_prompt(error_log, memory_hits, history, source_code)
         try:
             response_text, used_tokens = _call_gemini(prompt)
             tokens += used_tokens
@@ -212,48 +223,4 @@ def run(
             history.append({"fix_summary": "コード抽出失敗", "error": "コードブロックが見つからない"})
             continue
 
-        # ── サンドボックスで適用・テスト ─────────
-        try:
-            apply_fix_fn(fix_code)
-            test_result = test_fn()
-        except Exception as e:
-            history.append({"fix_summary": fix_code[:100], "error": str(e)})
-            continue
-
-        # ── 正常停止 ─────────────────────────────
-        if test_result.get("all_passed"):
-            return LoopResult(
-                success=True,
-                fix_code=fix_code,
-                attempts=attempt + 1,
-                latency=round(time.perf_counter() - start, 3),
-                tokens=tokens,
-                stop_reason="success",
-                history=history,
-            )
-
-        # テスト失敗 → 履歴に追記してループ継続
-        failed = [r for r in test_result.get("details", []) if not r["passed"]]
-        history.append({
-            "fix_summary": fix_code[:100],
-            "error": f"テスト失敗: {[r['name'] for r in failed]}",
-        })
-
-    # ── 停止トリガー① 試行回数上限 ──────────────
-    return LoopResult(
-        success=False,
-        attempts=MAX_ATTEMPTS,
-        latency=round(time.perf_counter() - start, 3),
-        tokens=tokens,
-        stop_reason="max_attempts",
-        history=history,
-    )
-
-
-def _extract_code(text: str) -> str | None:
-    """LLMの出力からコードブロックを抽出する"""
-    import re
-    match = re.search(r"```python\s*(.*?)```", text, re.DOTALL)
-    if match:
-        return match.group(1).strip()
-    return None
+        # ── サンドボックスで適用・テスト ─────

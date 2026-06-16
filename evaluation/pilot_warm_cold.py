@@ -39,24 +39,23 @@ from confidence_score import compute_all
 from run_experiments  import _apply_fix, _read_target_file, _get_error_log
 
 # ------------------------------------------------------------------ 設定
-TEST_SCENARIO = "L1-A"     # 既存シナリオを流用（注入・テストはそのまま）
+TEST_SCENARIO = "L2-A"     # 2回固定で headroom あり（response-arg改名のKeyError）
 N_TRIALS      = 20         # 各条件20試行（パイロットは傾向確認で十分）
 OUT           = "/results/pilot_warm_cold.csv"
 
-# Warm 用シード：L1-A と「同種だが同一でない」兄弟事例。
-#  - error_log: L1-A の想定エラー（"KeyError: 'text' ..."）と構造は同じだがキーが違う
-#  - fix_code : 過去の兄弟修正（防御的パースの型）。テストの正解そのものではない
-# 注釈(日本語解説)は付けない。生のエラー文の方が記憶に貯まる形に近く、
-# Titan埋め込みでも兄弟エラー(L1-Aの "KeyError: 'text' ...")との類似度が
-# 0.55→0.84 に上がる（diag_threshold.py で確認済み）。
-SEED_ERROR_LOG = "KeyError: 'result' in candidates[0]['content']['parts'][0]"
+# Warm 用シード：L2-A と「同種だが同一でない」兄弟事例。
+#  - error_log: L2-A の想定エラー（"KeyError: 'task_title' (got 'title')"）と
+#    構造は同じだがキーが違う（task_name/name）。同一の正解ではない。
+#  - fix_code : 過去の兄弟修正（スキーマのキー名を期待名へ戻す型）。
+SEED_ERROR_LOG = "KeyError: 'task_name' (got 'name')"
 SEED_FIX_CODE = (
-    "# 過去の兄弟ケースの修正例：応答パースを防御的に行いキー名の揺れを吸収する\n"
-    "parts = data['candidates'][0]['content']['parts'][0]\n"
-    "text = parts.get('result', parts.get('output', parts.get('text', '')))\n"
-    "if isinstance(text, list):\n"
-    "    text = text[0]\n"
-    "summary = str(text)\n"
+    "# 過去の兄弟ケースの修正例：レスポンススキーマのキー名がAPI変更で 'name' にずれた\n"
+    "# → Pydanticモデルのフィールドを期待キー 'task_name' に戻して解消した\n"
+    "from pydantic import BaseModel\n"
+    "\n"
+    "class TaskItem(BaseModel):\n"
+    "    task_name: str   # 'name' から期待キー 'task_name' に修正\n"
+    "    done: bool\n"
 )
 
 # ------------------------------------------------------------------ 1試行
@@ -67,7 +66,7 @@ def one_trial(condition: str) -> dict:
         memory_db.save_success(
             error_log=SEED_ERROR_LOG,
             fix_code=SEED_FIX_CODE,
-            scenario="L1-A-seed",       # テスト対象とは別IDで“同一でない”ことを明示
+            scenario="L2-A-seed",       # テスト対象とは別IDで“同一でない”ことを明示
             attempts=1,
         )
 

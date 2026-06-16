@@ -29,7 +29,7 @@ sys.path.append("/evaluation")
 import reflection_engine
 from inject_bug        import inject, restore
 from predefined_tests import run_all_tests
-from run_experiments  import _apply_fix, _get_error_log
+from run_experiments  import _apply_fix, _get_error_log, _read_target_file
 
 # ------------------------------------------------------------------ 設定
 SCENARIOS = ["L1-A", "L1-B", "L1-C", "L2-A", "L2-B", "L2-C"]
@@ -46,6 +46,7 @@ def one_cold_trial(scenario: str) -> dict:
             memory_hits=[],                       # Cold = 記憶なし
             apply_fix_fn=lambda code: _apply_fix(scenario, code),
             test_fn=lambda: run_all_tests(scenario),
+            source_code=_read_target_file(scenario),   # ★コードを供給（①方式に合わせる）
         )
         return {
             "scenario":    scenario,

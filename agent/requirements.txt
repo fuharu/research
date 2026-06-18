@@ -3,3 +3,5 @@ google-generativeai
 httpx
 boto3
 scipy
+pytest
+pytest-timeout

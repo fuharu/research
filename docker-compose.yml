@@ -57,6 +57,8 @@ services:
       - ./evaluation:/evaluation
       - ./results:/results
       - /var/run/docker.sock:/var/run/docker.sock
+      # A方式: BugsInPy の checkout(ホスト ~/BugsInPy/workspace) を共有
+      - ../BugsInPy/workspace:/bench_workspace
     depends_on:
       - backend
       - mock_gemini

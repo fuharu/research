@@ -48,15 +48,14 @@ OUT           = "/results/pilot_warm_cold.csv"
 #    構造は同じだがキーが違う（task_name/name）。同一の正解ではない。
 #  - fix_code : 過去の兄弟修正（スキーマのキー名を期待名へ戻す型）。
 SEED_ERROR_LOG = "KeyError: 'task_name' (got 'name')"
-SEED_FIX_CODE = (
-    "# 過去の兄弟ケースの修正例：レスポンススキーマのキー名がAPI変更で 'name' にずれた\n"
-    "# → Pydanticモデルのフィールドを期待キー 'task_name' に戻して解消した\n"
-    "from pydantic import BaseModel\n"
-    "\n"
-    "class TaskItem(BaseModel):\n"
-    "    task_name: str   # 'name' から期待キー 'task_name' に修正\n"
-    "    done: bool\n"
-)
+SEED_FIX_CODE = """# 兄弟ケースの成功修正：APIで改名されたレスポンスキー 'name' を、Pydantic の
+# alias で期待キー 'task_name' にマッピングして解消した（populate_by_name=True）。
+from pydantic import BaseModel, ConfigDict, Field
+
+class Item(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    task_name: str = Field(alias='name')
+"""
 
 # ------------------------------------------------------------------ 1試行
 def one_trial(condition: str) -> dict:

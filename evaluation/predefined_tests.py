@@ -18,8 +18,10 @@ BACKEND_URL = "http://backend:8000"
 # ── テスト実行ユーティリティ ──────────────────
 
 def run_test(name: str, fn) -> dict:
-    # コード適用直後は backend がリロード中で一時的に接続拒否になることがあるため、
-    # 接続系エラーのみ短時間リトライする。
+    # コード適用直後は backend(uvicorn --reload) のリロードが間に合わず、
+    # 古い応答や 500/接続拒否を返す「リロードレース」が起きる。これは修正の正否とは
+    # 無関係なので、失敗時は反映を待って数回リトライし、正しい修正を取りこぼさない。
+    # （誤った修正は全リトライで失敗し続けるので判定は保たれる。）
     last_error = None
     for _ in range(5):
         try:
@@ -27,10 +29,8 @@ def run_test(name: str, fn) -> dict:
             return {"name": name, "passed": True, "error": None}
         except Exception as e:
             last_error = e
-            if "Connection refused" in str(e):
-                time.sleep(0.5)
-                continue
-            return {"name": name, "passed": False, "error": str(e)}
+            time.sleep(0.6)   # リロード反映待ち
+            continue
     return {"name": name, "passed": False, "error": str(last_error)}
 
 
@@ -122,7 +122,7 @@ def test_l2a_happy_path():
     assert resp.status_code == 200
     tasks = resp.json()["tasks"]
     assert len(tasks) > 0
-    assert "task_title" in tasks[0]         # ★ キー名が正しいことを確認
+    assert "task_title" in tasks[0]
     assert isinstance(tasks[0]["task_title"], str)
 
 def test_l2a_edge_case():
@@ -134,7 +134,6 @@ def test_l2a_edge_case():
 def test_l2a_regression():
     """titleキーが存在しないことを確認（旧バグの再発防止）"""
     resp = httpx.get(f"{BACKEND_URL}/api/tasks")
-    # "title"だけになっている状態はバグなのでNGとする
     for task in resp.json()["tasks"]:
         assert "task_title" in task
 
@@ -152,7 +151,7 @@ TESTS_L2A = [
 def test_l2b_happy_path():
     resp = httpx.get(f"{BACKEND_URL}/api/tasks")
     tasks = resp.json()["tasks"]
-    assert isinstance(tasks[0]["user"], str)   # ★ userが文字列であることを確認
+    assert isinstance(tasks[0]["user"], str)
 
 def test_l2b_edge_case():
     """userがdictでないことを確認"""
@@ -178,7 +177,7 @@ TESTS_L2B = [
 def test_l2c_happy_path():
     resp = httpx.get(f"{BACKEND_URL}/api/tasks")
     tasks = resp.json()["tasks"]
-    assert isinstance(tasks, list)             # ★ tasksがlistであることを確認
+    assert isinstance(tasks, list)
 
 def test_l2c_edge_case():
     """tasksが空でないことを確認"""

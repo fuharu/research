@@ -35,6 +35,11 @@ def one_trial(condition):
         memory_db.save_success(error_log=SEED_ERROR_LOG, fix_code=SEED_FIX_CODE,
                                scenario="L2-A-seed", attempts=1)
     inject(TEST_SCENARIO)
+    # 注入直後（バグ入り）の書込対象を控えておき、apply失敗時に復元する
+    buggy = {p: Path(p).read_text(encoding="utf-8") for p in WRITABLE}
+    def _revert():
+        for p, c in buggy.items():
+            Path(p).write_text(c, encoding="utf-8")
     try:
         error_log = _get_error_log(TEST_SCENARIO)
         hits = memory_db.search_similar(error_log) if condition == "warm" else []
@@ -43,6 +48,7 @@ def one_trial(condition):
             readable=READABLE, writable=WRITABLE,
             read_file_fn=_read_file, apply_fix_fn=_apply_fix,
             test_fn=lambda: run_all_tests(TEST_SCENARIO),
+            revert_fn=_revert,
         )
         return {"condition":condition, "success":int(bool(res.success)),
                 "attempts":res.attempts, "iters":res.iters, "reads":res.reads,

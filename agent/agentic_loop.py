@@ -13,7 +13,7 @@ import reflection_engine as RE   # _call_gemini / _extract_code を再利用
 MAX_ITERS       = 14
 TIMEOUT_SECONDS = 300
 MAX_TOKENS      = 60_000
-READ_LIMIT      = 2500   # これらのファイルは小さく実質全文
+READ_LIMIT      = 8000   # 数百行までは実質全文（巨大ファイルはツール探索フェーズでpatch化）
 
 ACTION_RE = re.compile(r"Action\s*:\s*([A-Za-z_]+)", re.I)
 INPUT_RE  = re.compile(r"Action Input\s*:\s*(.+)", re.I)

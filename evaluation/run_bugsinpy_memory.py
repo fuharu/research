@@ -4,21 +4,13 @@
 =====================================================================
 設計（pilot_warm_cold.py の BugsInPy 版）：
   - Cold = 記憶なし / Warm = 対象バグの“兄弟”（同種だが同一でない）成功事例をシード。
-  - ②ループは read_file で原因を特定し edit_file(SEARCH/REPLACE) で直す（ソース非供給）。
+  - ②ループは read_file/search_in_file/read_lines で原因を特定し edit_file で直す。
     候補ファイル＝bench_retrieval の top-K（リポジトリ構成は既知＝ギャップではない）。
   - 毎試行：memory_db.reset → (warmならseed) → 候補をバグ状態に復元 → ②実行 → 復元。
-    これで各試行が i.i.d.（記憶状態が固定）。
   - 主指標：attempts / iters / reads / latency / tokens / success。
   - 検定：Wilcoxon（warm < cold）を attempts と iters に。
+  - DEBUG=1 で各試行の行動ログを出力（探索の挙動確認用）。
 
-兄弟シードの作り方（重要・[[記憶効果測定の妥当性根拠]] と整合）：
-  人手で“効いた技法”を書くと artifact になりうる。可能なら **同種の別バグ（donor bug）の
-  実際の修正**を Warm シードに使う（最も現実的）。bugsinpy_seeds.py に
-  {"proj:bug": {"error_log":..., "fix_code":...}} で定義し、ここから引く。
-
-前提：
-  - bugsinpy コンテナ起動中（--name bugsinpy）、対象バグが buggy(v0) で checkout 済み。
-  - .env で実LLM（USE_MOCK_GEMINI=false）、Bedrock 埋め込み等は既存設定。
 実行：
   docker compose run --rm -e PROJ=black -e BUG=<id> -e SEED_KEY=black:<donor> \
       -e N_TRIALS=15 agent python /evaluation/run_bugsinpy_memory.py
@@ -40,22 +32,21 @@ import bench_bugsinpy as B
 import bench_retrieval as R
 
 try:
-    import bugsinpy_seeds            # {"proj:bug": {"error_log":..,"fix_code":..}}
+    import bugsinpy_seeds
 except Exception:
     bugsinpy_seeds = None
 
-# ------------------------------------------------------------------ 設定
 PROJ        = os.getenv("PROJ", "black")
-BUG         = os.getenv("BUG", "")                  # 記録用ラベル（checkout は別途）
+BUG         = os.getenv("BUG", "")
 N_TRIALS    = int(os.getenv("N_TRIALS", "15"))
 TOPK        = int(os.getenv("TOPK", "12"))
-REVERT_ON_FAIL = os.getenv("REVERT_ON_FAIL", "1") == "1"  # 失敗適用ごとに baseline へ戻す
+REVERT_ON_FAIL = os.getenv("REVERT_ON_FAIL", "1") == "1"
 SEED_KEY    = os.getenv("SEED_KEY", f"{PROJ}:{BUG}")
 OUT         = os.getenv("OUT", f"/results/bugsinpy_memory_{PROJ}_{BUG or 'x'}.csv")
+DEBUG       = os.getenv("DEBUG") == "1"
 
 
 def _load_seed():
-    """Warm シード（error_log, fix_code）を取得。優先順位：env > seeds module。"""
     el = os.getenv("SEED_ERROR_LOG")
     fc = os.getenv("SEED_FIX_CODE")
     if el and fc:
@@ -73,7 +64,6 @@ def main():
         print(f"!! {pdir} が無い。bugsinpyコンテナで {PROJ} の対象バグを checkout 済みか確認。")
         return
 
-    # バグ再現の確認＆error_logの取得（決定的なので1回でよい）
     pre = B.run_bugsinpy_test(PROJ)
     print("buggy test all_passed:", pre["all_passed"], "（False=バグ再現中＝正常）")
     if pre["all_passed"]:
@@ -81,14 +71,12 @@ def main():
         return
     error_log = f"テストが失敗しています（{PROJ}）:\n{pre['out'][-1200:]}"
 
-    # 候補ファイル（localization）。リポジトリ構成は既知＝情報ギャップではない。
     cands = R.retrieve(pdir, pre["out"], k=TOPK)
     cand_paths = {fp for fp, _ in cands}
     print(f"top-{TOPK} candidate files:")
     for fp, nl in cands:
         print(f"  {nl:5}行  {fp.replace(pdir+'/','')}")
 
-    # baseline（バグ状態）を退避。試行間／失敗時の復元に使う。
     backup = {fp: Path(fp).read_text(encoding="utf-8", errors="replace") for fp in cand_paths}
     def revert_all():
         for fp, txt in backup.items():
@@ -108,9 +96,10 @@ def main():
                 error_log=seed["error_log"], fix_code=seed["fix_code"],
                 scenario=f"{SEED_KEY}-seed", attempts=1,
             )
-        revert_all()  # 候補ファイルをバグ状態へ戻す（試行の独立性）
+        revert_all()
 
         memory_hits = memory_db.search_similar(error_log) if condition == "warm" else []
+        res = None
         try:
             res = agentic_loop.run(
                 error_log, memory_hits,
@@ -123,12 +112,21 @@ def main():
         finally:
             revert_all()
             memory_db.reset()
+        if DEBUG and res is not None:
+            print(f"  --- {condition} 行動ログ（iters={res.iters} reads={res.reads} "
+                  f"attempts={res.attempts} stop={res.stop_reason}）---")
+            for a in res.history:
+                print("    ·", a)
         return {
             "condition": condition, "proj": PROJ, "bug": BUG,
-            "success": int(bool(res.success)), "attempts": res.attempts,
-            "iters": res.iters, "reads": res.reads, "latency_s": res.latency,
-            "tokens": res.tokens, "n_hits": len(memory_hits),
-            "stop_reason": res.stop_reason,
+            "success": int(bool(res.success)) if res else 0,
+            "attempts": res.attempts if res else 0,
+            "iters": res.iters if res else 0,
+            "reads": res.reads if res else 0,
+            "latency_s": res.latency if res else 0,
+            "tokens": res.tokens if res else 0,
+            "n_hits": len(memory_hits),
+            "stop_reason": res.stop_reason if res else "error",
         }
 
     conditions = ["cold", "warm"] if seed else ["cold"]
@@ -140,8 +138,8 @@ def main():
                 r = one_trial(cond)
                 rows.append(r); w.writerow(r); f.flush()
                 print(f"{cond} {i+1}/{N_TRIALS}: success={r['success']} "
-                      f"attempts={r['attempts']} iters={r['iters']} hits={r['n_hits']} "
-                      f"stop={r['stop_reason']}")
+                      f"attempts={r['attempts']} iters={r['iters']} reads={r['reads']} "
+                      f"hits={r['n_hits']} stop={r['stop_reason']}")
     print("\nsaved:", OUT)
     summarize(rows)
 

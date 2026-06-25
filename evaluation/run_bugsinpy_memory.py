@@ -44,6 +44,8 @@ REVERT_ON_FAIL = os.getenv("REVERT_ON_FAIL", "1") == "1"
 SEED_KEY    = os.getenv("SEED_KEY", f"{PROJ}:{BUG}")
 OUT         = os.getenv("OUT", f"/results/bugsinpy_memory_{PROJ}_{BUG or 'x'}.csv")
 DEBUG       = os.getenv("DEBUG") == "1"
+if os.getenv("SIM_THRESHOLD"):
+    memory_db.SIMILARITY_THRESHOLD = float(os.getenv("SIM_THRESHOLD"))
 
 
 def _load_seed():
@@ -113,8 +115,9 @@ def main():
             revert_all()
             memory_db.reset()
         if DEBUG and res is not None:
+            sims = [h.get("similarity") for h in memory_hits]
             print(f"  --- {condition} 行動ログ（iters={res.iters} reads={res.reads} "
-                  f"attempts={res.attempts} stop={res.stop_reason}）---")
+                  f"attempts={res.attempts} stop={res.stop_reason} hit_sims={sims}）---")
             for a in res.history:
                 print("    ·", a)
         return {

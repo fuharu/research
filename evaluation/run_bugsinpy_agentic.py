@@ -49,8 +49,9 @@ def main():
             err, [], readable=cand_paths, writable=cand_paths,
             read_file_fn=lambda p: Path(p).read_text(encoding="utf-8", errors="replace"),
             apply_fix_fn=lambda p, c: Path(p).write_text(c, encoding="utf-8"),
-            test_fn=lambda: B.run_bugsinpy_test(PROJ),
-            revert_fn=revert)
+            test_fn=lambda: B.run_bugsinpy_test(PROJ))
+            # 注: BugsInPyはサーバ無し＆複数ファイル修正があるため、試行内は復元しない
+            #     （編集を累積させる）。試行間のリセットは finally の revert() で行う。
         print(f"\nRESULT: success={res.success} iters={res.iters} reads={res.reads} "
               f"attempts={res.attempts} stop={res.stop_reason}")
         print("（success=Trueなら retrieval→②→test の本接続OK）")

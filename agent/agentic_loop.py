@@ -147,20 +147,25 @@ def _memory_section(memory_hits):
             f"（ヒント：似た箇所・手法を手がかりにすること）\n")
 
 
-def _build_prompt(error_log, memory_hits, actions, last_obs, file_list):
+def _build_prompt(error_log, memory_hits, actions, last_obs, file_list, urge=False):
     log = "\n".join(actions[-10:]) or "(まだ何もしていない)"
     if last_obs:
         obs = f"\n【直近の観測：{last_obs[0]}】\n```\n{last_obs[1]}\n```\n"
     else:
         obs = "\n（まだ何も読んでいない）\n"
+    urge_block = ""
+    if urge:
+        urge_block = ("\n【!! 今すぐ修正を !!】十分に読みました。同じ箇所を読み返さないこと。"
+                      "次の一手は必ず edit_file。直近に読んだコードの数行を SEARCH に"
+                      "そのままコピーし（行番号 'Lnnn: ' は除く）、修正後を REPLACE に書く。\n")
     return f"""あなたは稼働中システムのバグを修復するエンジニアです。
 実行時エラーが発生しました。ソースは渡されていません。ツールで原因を特定し修正してください。
 
 【ツール】
 - read_file       : ファイルを読む（小=全文／大=アウトライン）。Action Input にパス1つ
 - search_in_file  : ファイル内をキーワード検索。Action Input に「パス 検索語」
-- read_lines      : 指定行範囲を読む。Action Input に「パス 開始-終了」（例: black.py 390-410）
-- edit_file       : 一部を置換して修正（主ツール）。Action Input に対象パス、本文に
+- read_lines      : 指定行範囲を読む。Action Input に「パス 開始-終了」（例: black.py 1030-1070）
+- edit_file       : 一部を置換/挿入して修正（主ツール）。Action Input に対象パス、本文に
                     SEARCH/REPLACE ブロック（複数可）。SEARCH は実在コードを“そのまま”。
                     ※行番号の "Lnnn: " は付けないこと（コード本体のみ）。
 - apply_fix       : ファイル全体を書換（小ファイル向け）。Action Input にパス、本文に ```python 全体```
@@ -171,6 +176,8 @@ def _build_prompt(error_log, memory_hits, actions, last_obs, file_list):
 =======
 （置換後のコード）
 >>>>>>> REPLACE
+※コードを「追加・挿入」したいときも edit_file を使う：挿入したい位置の既存の数行を
+  SEARCH に入れ、REPLACE に「その数行 ＋ 追加したい行」を書く（既存行を消さず増やす）。
 
 【発生したエラー】
 {error_log}
@@ -180,11 +187,11 @@ def _build_prompt(error_log, memory_hits, actions, last_obs, file_list):
 
 【行動ログ】
 {log}
-{obs}
+{obs}{urge_block}
 【方針】
-1) まず read_file でアウトライン把握 → search_in_file で該当箇所を特定 → read_lines で周辺を読む
-2) 原因が分かったら edit_file で“最小限の置換”を行う（whole-file は避ける）
-3) テスト全通過で完了。失敗時はファイルは元に戻るので読み直して別案を試す
+1) read_file→search_in_file→read_lines で“一度”該当箇所を特定する
+2) 特定したら【すぐに】edit_file で修正する（同じ箇所を2回より多く読み返さない）
+3) テスト全通過で完了。失敗時はファイルは元に戻るので、別の修正案で再試行する
 
 【出力（1手だけ・厳守）】
 Thought: <短い考え>
@@ -210,6 +217,7 @@ def run(error_log, memory_hits, readable, writable,
         read_file_fn, apply_fix_fn, test_fn, revert_fn=None):
     start = time.perf_counter()
     tokens = attempts = reads = iters = 0
+    reads_since_attempt = 0
     actions = []
     last_obs = None
     file_list = "\n".join(f"- {p}" for p in sorted(readable))
@@ -236,7 +244,8 @@ def run(error_log, memory_hits, readable, writable,
         if tokens >= MAX_TOKENS:
             return done(False, None, "cost_limit")
 
-        prompt = _build_prompt(error_log, memory_hits, actions, last_obs, file_list)
+        urge = reads_since_attempt >= 3
+        prompt = _build_prompt(error_log, memory_hits, actions, last_obs, file_list, urge=urge)
         try:
             text, used = RE._call_gemini(prompt); tokens += used
         except Exception as e:
@@ -254,7 +263,7 @@ def run(error_log, memory_hits, readable, writable,
             if not tgt:
                 actions.append(f"read_file {arg} → 不可（候補から選ぶ）")
             else:
-                reads += 1
+                reads += 1; reads_since_attempt += 1
                 content = read_file_fn(tgt)
                 last_obs = (f"read_file {tgt}", _read_observation(content)[:READ_LIMIT])
                 actions.append(f"read_file {tgt} → {content.count(chr(10))+1}行")
@@ -266,7 +275,7 @@ def run(error_log, memory_hits, readable, writable,
             elif not rest.strip():
                 actions.append(f"search_in_file {tgt} → 検索語なし")
             else:
-                reads += 1
+                reads += 1; reads_since_attempt += 1
                 content = read_file_fn(tgt)
                 last_obs = (f"search '{rest.strip()}' in {tgt}", _grep(content, rest)[:READ_LIMIT])
                 actions.append(f"search_in_file {tgt} '{rest.strip()[:30]}'")
@@ -279,7 +288,7 @@ def run(error_log, memory_hits, readable, writable,
             elif not rng:
                 actions.append(f"read_lines {tgt} → 行範囲（開始-終了）が必要")
             else:
-                reads += 1
+                reads += 1; reads_since_attempt += 1
                 a, b = int(rng.group(1)), int(rng.group(2))
                 content = read_file_fn(tgt)
                 last_obs = (f"read_lines {tgt} {a}-{b}", _slice(content, a, b)[:READ_LIMIT])
@@ -296,7 +305,7 @@ def run(error_log, memory_hits, readable, writable,
             new_content, err = _apply_edits(current, edits)
             if err:
                 actions.append(f"edit_file {tgt} → {err}"); continue
-            attempts += 1
+            attempts += 1; reads_since_attempt = 0
             status, info = _try_write(tgt, new_content)
             if status == "pass":
                 actions.append(f"edit_file {tgt} → PASS")
@@ -309,7 +318,7 @@ def run(error_log, memory_hits, readable, writable,
                 actions.append(f"apply_fix {arg} → 書込不可パス"); continue
             if not code:
                 actions.append(f"apply_fix {tgt} → コードブロック無し"); continue
-            attempts += 1
+            attempts += 1; reads_since_attempt = 0
             status, info = _try_write(tgt, code)
             if status == "pass":
                 actions.append(f"apply_fix {tgt} → PASS")
